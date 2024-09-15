@@ -48,7 +48,6 @@ services:
     build: generate_secrets
     volumes:
       - ../data/authelia/secrets:/secrets
-
   authelia:
     image: authelia/authelia
     container_name: authelia
@@ -74,39 +73,6 @@ services:
       AUTHELIA_IDENTITY_VALIDATION_RESET_PASSWORD_JWT_SECRET_FILE: /config/secrets/JWT_SECRET
       AUTHELIA_SESSION_SECRET_FILE: /config/secrets/SESSION_SECRET
       AUTHELIA_STORAGE_ENCRYPTION_KEY_FILE: /config/secrets/STORAGE_ENCRYPTION_KEY
-
-  sonarr:
-    container_name: sonarr
-    image: linuxserver/sonarr:latest
-    restart: unless-stopped
-    labels:
-      - 'traefik.enable=true'
-      - 'traefik.http.routers.sonarr.rule=Host(`sonarr.${MY_DOMAIN}`)'
-      - 'traefik.http.routers.sonarr.entryPoints=websecure'
-      - 'traefik.http.routers.sonarr.middlewares=authelia@docker'
-    environment:
-      TZ: Europe/Amsterdam
-    volumes:
-      - ../data/sonarr:/config
-      - /mnt/media/TV:/tv
-      - /mnt/media/Downloads:/downloads
-
-  radarr:
-    container_name: radarr
-    image: linuxserver/radarr:latest
-    restart: unless-stopped
-    labels:
-      - 'traefik.enable=true'
-      - 'traefik.http.routers.radarr.rule=Host(`radarr.${MY_DOMAIN}`)'
-      - 'traefik.http.routers.radarr.entryPoints=websecure'
-      - 'traefik.http.routers.radarr.middlewares=authelia@docker'
-    environment:
-      TZ: Europe/Amsterdam
-    volumes:
-      - ../data/radarr:/config
-      - /mnt/media/Movies:/movies
-      - /mnt/media/Downloads:/downloads
-
   deluge:
     container_name: deluge
     image: linuxserver/deluge:latest
@@ -121,18 +87,150 @@ services:
     volumes:
       - ../data/deluge:/config
       - /mnt/media/Downloads:/downloads
-
-  jellyfin:
-    container_name: jellyfin
-    image: jellyfin/jellyfin:latest
+  mysql:
+    container_name: mysql
+    image: mysql:8.2.0
+    restart: always
+    labels:
+      - 'traefik.enable=true'
+      - 'traefik.http.routers.mysql.rule=Host(`mysql.${MY_DOMAIN}`)'
+      - 'traefik.http.routers.mysql.entryPoints=websecure'
+    environment:
+      MYSQL_DATABASE: "db"
+      # So you don't have to use root, but you can if you like
+      MYSQL_USER: "user"
+      # You can use whatever password you like
+      MYSQL_PASSWORD: "password"
+      # Password for root access
+      MYSQL_ROOT_PASSWORD: "password"
+    ports:
+      # <Port exposed> : <MySQL Port running inside container>
+      - "3306:3306"
+    expose:
+      # Opens port 3306 on the container
+      - "3306"
+      # Where our data will be persisted
+    volumes:
+      - ../data/mysql:/var/lib/mysql
+  postgres:
+    container_name: postgres
+    image: pgvector/pgvector:pg16
+    restart: always
+    labels:
+      - 'traefik.enable=true'
+      - 'traefik.http.routers.postgres.rule=Host(`postgres.${MY_DOMAIN}`)'
+      - 'traefik.http.routers.postgres.entryPoints=websecure'
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    logging:
+      options:
+        max-size: 10m
+        max-file: "3"
+    ports:
+      - "5438:5432"
+    volumes:
+      - ../data/postgres:/var/lib/postgresql/data
+  portainer:
+    container_name: portainer
+    image: portainer/portainer-ce:latest
+    labels:
+      - 'traefik.enable=true'
+      - 'traefik.http.routers.portainer.rule=Host(`docker.${MY_DOMAIN}`)'
+      - 'traefik.http.routers.portainer.entryPoints=websecure'
+    ports:
+      - 9443:9443
+    volumes:
+      - ../data/port/port/data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+  duplicati:
+    image: lscr.io/linuxserver/duplicati:latest
+    container_name: duplicati
+    privileged: true
+    labels:
+      - 'traefik.enable=true'
+      - 'traefik.http.routers.duplicati.rule=Host(`backup.${MY_DOMAIN}`)'
+      - 'traefik.http.routers.duplicati.entryPoints=websecure'
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Etc/UTC
+      - CLI_ARGS= #optional
+    volumes:
+      - ../data/duplicati:/config
+      - /home/aritra/:/backups
+      - ../data/duplicati:/source
+    ports:
+      - 8200:8200
+    restart: unless-stopped
+  mongodb:
+    container_name: mongodb
+    image: mongo:6-jammy
     restart: unless-stopped
     labels:
       - 'traefik.enable=true'
-      - 'traefik.http.routers.jellyfin.rule=Host(`jellyfin.${MY_DOMAIN}`)'
-      - 'traefik.http.routers.jellyfin.entryPoints=websecure'
-    environment:
-      TZ: Europe/Amsterdam
+      - 'traefik.http.routers.mongodb.rule=Host(`mongodb.${MY_DOMAIN}`)'
+      - 'traefik.http.routers.mongodb.entryPoints=websecure'
+    ports:
+      - "27017:27017"
     volumes:
-      - ../data/jellyfin:/config
-      - /mnt/media/Movies:/movies
-      - /mnt/media/TV:/tv
+      - ../data/mongodb/data:/data/db
+  syncthing:
+    image: lscr.io/linuxserver/syncthing:latest
+    container_name: syncthing
+    hostname: syncthing #optional
+    labels:
+      - 'traefik.enable=true'
+      - 'traefik.http.routers.syncthing.rule=Host(`sync.${MY_DOMAIN}`)'
+      - 'traefik.http.routers.syncthing.entryPoints=websecure'
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Etc/UTC
+    volumes:
+      - ../../Services/NginxProxyManager/sync:/config
+      - /home/aritra/File/:/data1
+      - /home/:/data2
+    ports:
+      - 8384:8384
+      - 22000:22000/tcp
+      - 22000:22000/udp
+      - 21027:21027/udp
+    restart: unless-stopped
+  freshrss:
+    image: lscr.io/linuxserver/freshrss:latest
+    container_name: freshrss
+    labels:
+      - 'traefik.enable=true'
+      - 'traefik.http.routers.freshrss.rule=Host(`rss.${MY_DOMAIN}`)'
+      - 'traefik.http.routers.freshrss.entryPoints=websecure'
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Etc/UTC
+    volumes:
+      - ../data/freshrss:/config
+    ports:
+      - 8010:80
+    restart: unless-stopped
+  fullfeedrss:
+    image: 'heussd/fivefilters-full-text-rss:latest'
+    container_name: fullfeedrss
+    labels:
+      - 'traefik.enable=true'
+      - 'traefik.http.routers.fullfeedrss.rule=Host(`rssExtract.${MY_DOMAIN}`)'
+      - 'traefik.http.routers.fullfeedrss.entryPoints=websecure'
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Etc/UTC
+        # Leave empty to disable admin section
+      - FTR_ADMIN_PASSWORD=
+    # volumes:
+    #   - './rss-cache:/var/www/html/cache/rss'
+    ports:
+      - '8011:80'
+    restart: unless-stopped
